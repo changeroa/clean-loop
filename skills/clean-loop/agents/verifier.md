@@ -19,6 +19,11 @@ evidence, required checks ran with recorded results, invariants still hold, unex
 resolved, and dependencies remain accepted. Give evidence-specific reasons; never infer acceptance
 from the worker's `completed` outcome.
 
+Non-empty `unexpected_findings` or `concerns` are evidence to judge, not an automatic rejection.
+Address every recorded item in the verdict reasons. Accept only when the evidence shows it was
+resolved within the unchanged contract or has no remaining effect. Use `reject`, `replan`, or
+`block` when an item remains active according to the outcome definitions above.
+
 ## Run verification
 
 Use a fresh context. Inspect the original goal, active plan, final diff, invariants, receipts, task

@@ -1116,8 +1116,6 @@ def transition(root, args):
                 raise ProtocolError("only a completed receipt can be accepted")
             if any(check["exit_code"] != 0 for check in required_checks):
                 raise ProtocolError("required receipt checks must succeed")
-            if receipt["unexpected_findings"] or receipt["concerns"]:
-                raise ProtocolError("receipt has unresolved findings or concerns")
             state.update(state="accepted", current_attempt=None, current_execution=None)
         elif outcome == "reject" and len(state["attempts"]) < run["limits"]["max_task_attempts"]:
             previous = run["executions"][state["current_execution"]]
