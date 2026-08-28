@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "run_id": "example-run",
+  "goal": "Describe the development outcome",
+  "phase": "exploring",
+  "active_synthesis": null,
+  "active_plan": null,
+  "limits": {
+    "max_exploration_followups": 1,
+    "max_task_attempts": 2,
+    "max_plan_revisions": 2
+  },
+  "exploration_followups": 0,
+  "tasks": {},
+  "executions": {},
+  "supervision": {
+    "lease_seconds": 120,
+    "unreachable_grace_seconds": 60,
+    "receipt_grace_seconds": 30
+  },
+  "artifacts": {},
+  "blocked_reasons": [],
+  "run_verdict": null
+}

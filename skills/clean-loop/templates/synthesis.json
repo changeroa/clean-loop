@@ -1,0 +1,13 @@
+{
+  "revision": 0,
+  "disposition": "ready",
+  "findings": ["F001"],
+  "open_conflicts": [],
+  "invariants": [
+    {
+      "id": "I001",
+      "statement": "State a global condition every relevant task must preserve"
+    }
+  ],
+  "decision": "State the evidence-backed system decision"
+}

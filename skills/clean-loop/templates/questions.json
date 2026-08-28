@@ -1,0 +1,9 @@
+[
+  {
+    "id": "Q001",
+    "question": "What behavior and constraints must this bounded change preserve?",
+    "scope": ["src/**", "tests/**"],
+    "kind": "explore",
+    "reasoning_demand": "medium"
+  }
+]

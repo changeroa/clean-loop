@@ -1,0 +1,6 @@
+interface:
+  display_name: "Clean Loop"
+  short_description: "Evidence-gated agent orchestration for development"
+  default_prompt:
+    "Use $clean-loop to execute this development goal through bounded exploration, implementation,
+    and independent verification."

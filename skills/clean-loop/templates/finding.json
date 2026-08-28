@@ -1,0 +1,13 @@
+{
+  "id": "F001",
+  "question_id": "Q001",
+  "kind": "fact",
+  "statement": "State one directly supported claim",
+  "confidence": "high",
+  "evidence": [
+    {
+      "type": "repo",
+      "ref": "path/to/file.py#symbol"
+    }
+  ]
+}

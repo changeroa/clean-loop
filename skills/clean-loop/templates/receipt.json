@@ -1,0 +1,24 @@
+{
+  "task_id": "T001",
+  "attempt_id": "T001-A01",
+  "outcome": "completed",
+  "execution": {
+    "id": "T001-A01-E01",
+    "generation": 1,
+    "role": "worker",
+    "adapter": "host-adapter-id",
+    "model": "runtime-model-id",
+    "reasoning_effort": "low"
+  },
+  "changed_files": ["src/example.py"],
+  "checks": [
+    {
+      "command": "python3 -m unittest",
+      "exit_code": 0,
+      "summary": "All focused tests passed"
+    }
+  ],
+  "assumptions": [],
+  "unexpected_findings": [],
+  "concerns": []
+}

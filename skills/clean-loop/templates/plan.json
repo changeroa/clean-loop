@@ -1,0 +1,19 @@
+{
+  "revision": 0,
+  "based_on_synthesis": 0,
+  "tasks": [
+    {
+      "id": "T001",
+      "kind": "implement",
+      "reasoning_demand": "medium",
+      "state": "pending",
+      "goal": "Implement one bounded change",
+      "depends_on": [],
+      "basis": ["F001"],
+      "preserves": ["I001"],
+      "write_scope": ["src/**", "tests/**"],
+      "acceptance": ["The bounded behavior is implemented and evidenced"],
+      "checks": ["python3 -m unittest"]
+    }
+  ]
+}

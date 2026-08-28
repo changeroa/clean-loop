@@ -1,0 +1,19 @@
+{
+  "name": "clean-loop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Evidence-gated agent orchestration for bounded development work",
+  "scripts": {
+    "lint:python": "uv run ruff check . && uv run ruff format --check .",
+    "lint:docs": "prettier --check .",
+    "lint": "npm run lint:python && npm run lint:docs",
+    "format:python": "uv run ruff check --fix . && uv run ruff format .",
+    "format:docs": "prettier --write .",
+    "format": "npm run format:python && npm run format:docs",
+    "test": "python3 -m unittest discover -s tests -v",
+    "check": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "prettier": "3.9.6"
+  }
+}

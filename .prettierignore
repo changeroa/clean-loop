@@ -1,0 +1,5 @@
+.clean-loop/
+.venv/
+node_modules/
+uv.lock
+package-lock.json

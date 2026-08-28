@@ -1,0 +1,6 @@
+{
+  "scope": "task",
+  "target": "T001-A01",
+  "outcome": "accept",
+  "reasons": ["All changed files are in scope and acceptance evidence is present"]
+}
