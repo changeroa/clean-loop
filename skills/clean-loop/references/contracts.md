@@ -47,6 +47,13 @@ explorer to answer without changing source or runtime state. Findings must cite 
   `changed_files`, `checks`, `assumptions`, `unexpected_findings`, `concerns`.
 - Verdict: `scope`, `target`, `outcome`, and non-empty `reasons`.
 
+`unexpected_findings` and `concerns` preserve semantic evidence, including items the worker believes
+it resolved before submission. They do not mechanically prevent acceptance merely because the arrays
+are non-empty. The independent verifier must address each recorded item and choose `accept`,
+`reject`, `replan`, or `block` according to its current impact. The deterministic kernel enforces
+objective receipt gates such as execution identity, outcome, scope, required checks, and exit codes;
+it does not replace that semantic verdict with an emptiness check.
+
 Paths stored in artifacts are repository-relative POSIX paths. A write scope ending in `/**` covers
 its directory recursively; a plain path covers exactly that path. Receipt execution role must match
 task kind: `explore -> explorer`, `implement -> worker`, and `verify -> verifier`. Explore and
@@ -88,6 +95,12 @@ accepted -> invalidated
 Starting an attempt is legal only for the next runnable task: it belongs to the active plan, is
 pending, and all dependencies are accepted. Submission requires a matching immutable receipt. A task
 verdict must target the current attempt.
+
+For `accept`, the receipt must have `outcome: completed`, all required checks must be present and
+successful, dependencies must still be accepted, and the verifier's reasons must account for any
+recorded unexpected findings or concerns. A resolved item may remain in the immutable receipt as
+history. An unresolved item requires `reject`, `replan`, or `block`; it is not erased to make the
+receipt acceptable.
 
 Each attempt has a fenced execution ID such as `T001-A01-E01`. A receipt must match the current
 attempt and execution, including generation, adapter, model, role, and reasoning effort. A stale

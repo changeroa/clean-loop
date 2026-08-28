@@ -160,7 +160,7 @@ class CleanLoopTest(unittest.TestCase):
         self.artifact(rel, receipt)
         self.event("submit", task=task_id, artifact=rel)
 
-    def verdict(self, target, outcome, scope="task"):
+    def verdict(self, target, outcome, scope="task", reasons=None):
         name = target if scope == "task" else f"run-{target}"
         rel = f"verdicts/{name}.json"
         self.artifact(
@@ -169,7 +169,7 @@ class CleanLoopTest(unittest.TestCase):
                 "scope": scope,
                 "target": target,
                 "outcome": outcome,
-                "reasons": [f"Evidence supports {outcome}"],
+                "reasons": reasons or [f"Evidence supports {outcome}"],
             },
         )
         return rel
@@ -429,7 +429,7 @@ class CleanLoopTest(unittest.TestCase):
         self.accept("T002", "T002-A01")
         self.assertEqual(loop.validate_run(self.root)["tasks"]["T002"]["state"], "accepted")
 
-    def test_accept_rejects_ineligible_receipt_evidence(self):
+    def test_accept_rejects_objectively_ineligible_receipt_evidence(self):
         cases = [
             ("blocked", None, None, None, "completed receipt"),
             ("error", None, None, None, "completed receipt"),
@@ -440,8 +440,6 @@ class CleanLoopTest(unittest.TestCase):
                 None,
                 "checks must succeed",
             ),
-            ("completed", None, ["A new fact needs synthesis"], None, "unresolved"),
-            ("completed", None, None, ["A concern needs resolution"], "unresolved"),
         ]
         for outcome, checks, findings, concerns, message in cases:
             with self.subTest(outcome=outcome, message=message):
@@ -460,6 +458,28 @@ class CleanLoopTest(unittest.TestCase):
                 verdict = self.verdict("T001-A01", "accept")
                 with self.assertRaisesRegex(loop.ProtocolError, message):
                     self.event("apply-verdict", task="T001", artifact=verdict)
+
+    def test_accept_defers_receipt_findings_and_concerns_to_verifier(self):
+        self.prepare_execution()
+        self.event("start-attempt", task="T001")
+        self.submit(
+            "T001",
+            "T001-A01",
+            unexpected_findings=["The first lint run found an issue that the final run resolved"],
+            concerns=["The verifier must confirm the recorded concern no longer blocks acceptance"],
+        )
+
+        verdict = self.verdict(
+            "T001-A01",
+            "accept",
+            reasons=[
+                "The final lint run resolves the recorded finding",
+                "The recorded concern has no remaining effect on the task contract",
+            ],
+        )
+        self.event("apply-verdict", task="T001", artifact=verdict)
+
+        self.assertEqual(loop.validate_run(self.root)["tasks"]["T001"]["state"], "accepted")
 
     def test_skip_rejects_active_pending_dependent(self):
         self.prepare_execution([self.task("T001", "low"), self.task("T002", "low", ["T001"])])

@@ -101,7 +101,9 @@ python3 "$clean_loop_script" transition --help
 - A worker may modify only its declared `write_scope` plus its receipt destination. It must not
   change the DAG, invariants, architecture, authority, Git history, remote systems, or deployment
   state.
-- Stop rather than silently widening scope. Record blockers and unexpected findings in the receipt.
+- Stop rather than silently widening scope. Record blockers and unexpected findings in the receipt,
+  including the disposition of items resolved within the unchanged task contract. Their presence is
+  evidence for the verifier, not a mechanical rejection by the kernel.
 - Treat one unavailable poll as `unknown`, not execution failure. Let the configured lease and grace
   period expire before workspace reconciliation. Never retry a stopped mutating execution before
   inspecting its write scope and actual diff.

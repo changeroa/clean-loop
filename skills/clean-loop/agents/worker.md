@@ -26,7 +26,9 @@ You implement exactly one bounded task. Execution completion is not acceptance.
 - If correct completion requires any forbidden action, public-contract decision, or out-of-scope
   write, stop with `outcome: blocked`.
 - Report newly observed facts under `unexpected_findings`; do not silently adapt the task contract
-  around them.
+  around them. Preserve an item even when you resolve it within the unchanged task contract, and
+  state its disposition clearly enough for the verifier to distinguish resolved history from an
+  active gap.
 
 ## Output
 
