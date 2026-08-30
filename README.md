@@ -200,6 +200,11 @@ The check suite runs Ruff linting and formatting, Prettier, and the unit/CLI sui
 - stale-result fencing and supervisor restart recovery
 - atomic artifact admission, event-specific argument errors, and successor-run linkage
 
+`npm run dogfood` also runs the public CLI through deterministic host scenarios in disposable Git
+workspaces. Use `npm run dogfood:keep` to retain each workspace, transcript, and report under
+`.dogfood/runs/` for inspection. See the [dogfooding guide](dogfood/README.md) for the scenario
+contract and the boundary between deterministic and live-host runs.
+
 The tests prove the kernel contract, not a particular host integration. Each adapter still needs
 conformance coverage for spawn, status mapping, result collection, interruption, and reconnect.
 

@@ -1,0 +1,11 @@
+diff --git a/tiny_app.py b/tiny_app.py
+index fdc6e09..7ac1fa2 100644
+--- a/tiny_app.py
++++ b/tiny_app.py
+@@ -2,4 +2,5 @@
+ 
+ 
+ def greeting(name: str) -> str:
+-    return f"Hello, {name}!"
++    normalized = name.lstrip()
++    return f"Hello, {normalized}!"

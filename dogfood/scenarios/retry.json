@@ -1,0 +1,19 @@
+{
+  "id": "retry",
+  "description": "Reject incomplete worker output, recover from a missing retry timestamp, and retry.",
+  "goal": "Normalize surrounding whitespace in greetings",
+  "attempts": [
+    {
+      "patch": "patches/greeting-lstrip.patch",
+      "expected_test_exit": 1,
+      "verdict": "reject"
+    },
+    {
+      "patch": "patches/greeting-finish-strip.patch",
+      "expected_test_exit": 0,
+      "verdict": "accept"
+    }
+  ],
+  "exercise_missing_retry_time": true,
+  "expected_protocol_errors": 1
+}

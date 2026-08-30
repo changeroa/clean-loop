@@ -1,0 +1,13 @@
+{
+  "id": "happy-path",
+  "description": "Complete one bounded change through the public CLI.",
+  "goal": "Normalize surrounding whitespace in greetings",
+  "attempts": [
+    {
+      "patch": "patches/greeting-strip.patch",
+      "expected_test_exit": 0,
+      "verdict": "accept"
+    }
+  ],
+  "expected_protocol_errors": 0
+}

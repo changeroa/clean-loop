@@ -1,0 +1,14 @@
+{
+  "id": "completed-followup",
+  "description": "Preserve a completed run and initialize a linked successor.",
+  "goal": "Normalize surrounding whitespace in greetings",
+  "attempts": [
+    {
+      "patch": "patches/greeting-strip.patch",
+      "expected_test_exit": 0,
+      "verdict": "accept"
+    }
+  ],
+  "followup_goal": "Add an optional punctuation setting without reopening completed history",
+  "expected_protocol_errors": 0
+}
