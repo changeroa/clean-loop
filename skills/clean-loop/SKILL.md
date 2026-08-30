@@ -54,7 +54,8 @@ interpretation, replanning, and completion. Do not modify product source code yo
    Create `questions.json` from [templates/questions.json](templates/questions.json) and follow its
    documented schema before dispatching explorers. Dispatch at most three read-only explorers in
    parallel with [agents/explorer.md](agents/explorer.md). Persist their structured findings under
-   `findings/`.
+   `findings/`. Register one finding immediately, or register a complete set atomically with
+   `register-artifacts`; never leave unrelated unregistered files in governed artifact directories.
 2. Synthesize the findings. Separate facts, inferences, and unknowns; merge duplicates; identify
    contradictions; derive invariants; then choose exactly one disposition: `ready`,
    `needs_more_evidence`, or `needs_authority`. For `needs_more_evidence`, append the one permitted
@@ -64,31 +65,39 @@ interpretation, replanning, and completion. Do not modify product source code yo
 3. If ready, create the next immutable plan revision. Every task must be bounded, dependency-valid,
    evidence-based, and independently verifiable. Decompose `implement/high` before dispatch. If it
    cannot be decomposed within the active decisions and authority, block instead of dispatching it.
-4. Run `validate`, activate the plan, and ask `supervise` for the next directive. MVP execution is
-   serial. For `dispatch`, select adapter/model/effort, call `start-attempt` with an explicit UTC
-   timestamp, and pass its fenced execution ID to the host agent. Dispatch `explore`, `implement`,
-   and `verify` tasks with [agents/explorer.md](agents/explorer.md),
-   [agents/worker.md](agents/worker.md), and [agents/verifier.md](agents/verifier.md), respectively.
-   Poll through the host adapter and record `active`, `completed`, terminal, or `unknown`
-   observations. An executor submits a matching execution-fenced receipt but cannot accept its own
-   task.
-5. Dispatch a fresh verifier with [agents/verifier.md](agents/verifier.md). Apply its task verdict.
-   A rejection retries the same contract; a changed goal, dependency, basis, invariant, scope,
-   acceptance criterion, or system decision requires a new plan revision. This acceptance verifier
-   is separate from the task executor for every task kind. For a `verify` task it judges the
-   submitted verification receipt; its verdict is an artifact, not another task, so verification
-   does not recurse.
+4. Run `validate`, use `status` or `next` to inspect the legal continuation, activate the plan, and
+   ask `supervise` for the next directive. MVP execution is serial. For `dispatch`, select
+   adapter/model/effort, call `start-attempt` with an explicit UTC timestamp, and pass its fenced
+   execution ID to the host agent. Dispatch `explore`, `implement`, and `verify` tasks with
+   [agents/explorer.md](agents/explorer.md), [agents/worker.md](agents/worker.md), and
+   [agents/verifier.md](agents/verifier.md), respectively. Poll through the host adapter and record
+   `active`, `completed`, terminal, or `unknown` observations. An executor submits a matching
+   execution-fenced receipt but cannot accept its own task. Prefer
+   `submit --artifact <receipt> --admit` so receipt registration and submission update the
+   projection atomically.
+5. Dispatch a fresh verifier with [agents/verifier.md](agents/verifier.md). Apply its task verdict,
+   preferably with `apply-verdict --artifact <verdict> --admit`. A rejection retries the same
+   contract; a changed goal, dependency, basis, invariant, scope, acceptance criterion, or system
+   decision requires a new plan revision. This acceptance verifier is separate from the task
+   executor for every task kind. For a `verify` task it judges the submitted verification receipt;
+   its verdict is an artifact, not another task, so verification does not recurse.
 6. Meta may skip a pending task only when the original goal and every remaining dependency stay
    satisfiable. Once every active task is `accepted` or `skipped`, run fresh run-level verification
    against the original goal, active plan, final diff, invariants, receipts, tests, integration
    behavior, and scope drift. A persisted `pass` verdict permits `completed`; `replan` returns to
    planning and `block` ends the run as blocked.
+7. A completed run is immutable history. When the user adds or materially changes requirements,
+   create a linked successor with
+   `init-next <new-run-dir> --after <completed-run-dir> --goal <goal>` instead of continuing outside
+   the runtime or reopening the completed projection.
 
 Use the deterministic runtime for state changes; do not edit `run.json` by hand:
 
 ```bash
 python3 "$clean_loop_script" --help
 python3 "$clean_loop_script" validate "$run_dir"
+python3 "$clean_loop_script" status "$run_dir"
+python3 "$clean_loop_script" next "$run_dir"
 python3 "$clean_loop_script" runnable "$run_dir"
 python3 "$clean_loop_script" supervise "$run_dir" --at 2026-08-28T00:00:00Z
 python3 "$clean_loop_script" transition --help
@@ -116,7 +125,7 @@ python3 "$clean_loop_script" transition --help
   becomes available, start a new run that records it rather than editing or resuming the blocked
   run.
 - Every finding, synthesis revision, plan revision, receipt, and verdict is immutable. `run.json` is
-  the only mutable state projection.
+  the only mutable state projection. `questions.json` is mutable and must not be registered.
 - Treat corruption, invalid schemas, impossible transitions, and required missing artifacts as
   protocol failures, not ordinary task failures.
 - The host owns polling and agent spawning. The kernel records observations and returns directives;

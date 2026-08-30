@@ -688,7 +688,255 @@ class CleanLoopTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(checked.returncode, 0, checked.stderr)
+        summary = json.loads(checked.stdout)
+        self.assertTrue(summary["valid"])
+        self.assertEqual(summary["phase"], "exploring")
+        self.assertNotIn("goal", summary)
+        full = self.cli("validate", str(cli_root), "--full")
+        self.assertEqual(full["goal"], "Exercise the public CLI")
         self.assertEqual(loop.load(cli_root / "run.json")["phase"], "exploring")
+
+    def test_batch_registration_is_atomic_and_order_independent(self):
+        findings = {
+            finding_id: {
+                "id": finding_id,
+                "question_id": "Q001",
+                "kind": "fact",
+                "statement": f"Evidence {finding_id} is stable",
+                "confidence": "high",
+                "evidence": [{"type": "repo", "ref": f"src/{finding_id}.py"}],
+            }
+            for finding_id in ["F001", "F002"]
+        }
+        for finding_id, data in findings.items():
+            loop.write(self.root / f"findings/{finding_id}.json", data)
+        loop.write(
+            self.root / "syntheses/000.json",
+            {
+                "revision": 0,
+                "disposition": "ready",
+                "findings": ["F001", "F002"],
+                "open_conflicts": [],
+                "invariants": [{"id": "I001", "statement": "Evidence stays stable"}],
+                "decision": "Use both findings",
+            },
+        )
+
+        result = self.cli(
+            "transition",
+            str(self.root),
+            "register-artifacts",
+            "--artifacts",
+            "syntheses/000.json",
+            "findings/F002.json",
+            "findings/F001.json",
+        )
+        self.assertEqual(result["registered_artifacts"], 3)
+        self.assertEqual(len(loop.validate_run(self.root)["artifacts"]), 3)
+
+        bad_root = Path(self.temp.name) / "bad-batch"
+        loop.init_run(bad_root, "Reject the entire invalid batch")
+        loop.write(
+            bad_root / "questions.json",
+            [
+                {
+                    "id": "Q001",
+                    "question": "What is valid?",
+                    "scope": ["src/**"],
+                    "kind": "explore",
+                    "reasoning_demand": "low",
+                }
+            ],
+        )
+        loop.write(bad_root / "findings/F001.json", findings["F001"])
+        invalid = dict(findings["F002"])
+        invalid.pop("evidence")
+        loop.write(bad_root / "findings/F002.json", invalid)
+        failed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "transition",
+                str(bad_root),
+                "register-artifacts",
+                "--artifacts",
+                "findings/F001.json",
+                "findings/F002.json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(failed.returncode, 2)
+        self.assertEqual(loop.load(bad_root / "run.json")["artifacts"], {})
+        self.assertTrue((bad_root / "findings/F001.json").exists())
+
+    def test_cli_rejects_mutable_artifacts_and_missing_event_arguments_early(self):
+        mutable = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "transition",
+                str(self.root),
+                "register-artifact",
+                "--artifact",
+                "questions.json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(mutable.returncode, 2)
+        self.assertIn("questions.json is mutable and must not be registered", mutable.stderr)
+
+        missing = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "transition",
+                str(self.root),
+                "start-attempt",
+                "--task",
+                "T001",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("--adapter, --model, --reasoning-effort, --at", missing.stderr)
+
+        self.finding()
+        self.event("set-phase", phase="synthesizing")
+        missing_artifact = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "transition",
+                str(self.root),
+                "set-phase",
+                "--phase",
+                "planning",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(missing_artifact.returncode, 2)
+        self.assertIn("synthesizing -> planning requires: --artifact", missing_artifact.stderr)
+
+    def test_next_requires_a_new_synthesis_after_exploration_follow_up(self):
+        self.finding()
+        self.event("set-phase", phase="synthesizing")
+        first = self.synthesis("needs_more_evidence", revision=0)
+        ready_for_follow_up = self.cli("next", str(self.root))
+        self.assertIn(first, ready_for_follow_up[0]["command"])
+        self.event("set-phase", phase="exploring", artifact=first)
+        self.event("set-phase", phase="synthesizing")
+
+        needs_new_synthesis = self.cli("next", str(self.root))
+        self.assertEqual(needs_new_synthesis[0]["action"], "create_synthesis")
+
+        second = self.synthesis("ready", revision=1)
+        ready_for_planning = self.cli("next", str(self.root))
+        self.assertIn(second, ready_for_planning[0]["command"])
+
+    def test_submit_and_verdict_can_admit_artifacts_atomically(self):
+        self.prepare_execution()
+        execution = self.event("start-attempt", task="T001")
+        receipt = {
+            "task_id": "T001",
+            "attempt_id": "T001-A01",
+            "outcome": "completed",
+            "execution": {
+                "id": execution["id"],
+                "generation": 1,
+                "role": "worker",
+                "adapter": "test-host",
+                "model": "standard",
+                "reasoning_effort": "low",
+            },
+            "changed_files": ["src/t001.py"],
+            "checks": [{"command": "python3 -m unittest", "exit_code": 0, "summary": "passed"}],
+            "assumptions": [],
+            "unexpected_findings": [],
+            "concerns": [],
+        }
+        loop.write(self.root / "receipts/T001-A01.json", receipt)
+        submitted = self.cli(
+            "transition",
+            str(self.root),
+            "submit",
+            "--task",
+            "T001",
+            "--artifact",
+            "receipts/T001-A01.json",
+            "--admit",
+            "--compact",
+        )
+        self.assertEqual(submitted["phase"], "executing")
+        self.assertEqual(loop.validate_run(self.root)["tasks"]["T001"]["state"], "submitted")
+
+        loop.write(
+            self.root / "verdicts/T001-A01.json",
+            {
+                "scope": "task",
+                "target": "T001-A01",
+                "outcome": "accept",
+                "reasons": ["Independent evidence passes"],
+            },
+        )
+        applied = self.cli(
+            "transition",
+            str(self.root),
+            "apply-verdict",
+            "--task",
+            "T001",
+            "--artifact",
+            "verdicts/T001-A01.json",
+            "--admit",
+            "--compact",
+        )
+        self.assertEqual(applied["outcome"], "accept")
+        self.assertEqual(loop.validate_run(self.root)["tasks"]["T001"]["state"], "accepted")
+
+    def test_status_phase_hint_and_successor_run(self):
+        initial = self.cli("status", str(self.root))
+        self.assertEqual(initial["next_actions"][0]["action"], "explore")
+
+        self.finding()
+        self.event("set-phase", phase="synthesizing")
+        synthesis = self.synthesis()
+        plan = self.plan()
+        with self.assertRaisesRegex(loop.ProtocolError, "enter planning first"):
+            self.event("activate-plan", artifact=plan)
+        self.event("set-phase", phase="planning", artifact=synthesis)
+        self.event("activate-plan", artifact=plan)
+        self.event("start-attempt", task="T001")
+        self.submit("T001", "T001-A01")
+        self.accept("T001", "T001-A01")
+        self.event("set-phase", phase="verifying")
+        self.assertEqual(self.cli("next", str(self.root))[0]["action"], "verify_run")
+        verdict = self.verdict("plan-000", "pass", scope="run")
+        verdict_action = self.cli("next", str(self.root))[0]
+        self.assertEqual(verdict_action["action"], "set_phase")
+        self.assertIn("--phase completed", verdict_action["command"])
+        self.event("set-phase", phase="completed", artifact=verdict)
+
+        completed = self.cli("next", str(self.root))
+        self.assertEqual(completed[0]["action"], "start_next_run")
+        successor = Path(self.temp.name) / "successor-run"
+        created = self.cli(
+            "init-next",
+            str(successor),
+            "--after",
+            str(self.root),
+            "--goal",
+            "Implement the follow-up requirement",
+        )
+        self.assertEqual(created["predecessor"]["run_id"], "scenario-run")
+        self.assertRegex(created["predecessor"]["run_sha256"], r"^[a-f0-9]{64}$")
+        self.assertEqual(loop.validate_run(successor)["phase"], "exploring")
 
     def test_execution_observation_renews_lease_and_recovers_from_unknown(self):
         self.prepare_execution()
