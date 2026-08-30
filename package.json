@@ -11,7 +11,9 @@
     "format:docs": "prettier --write .",
     "format": "npm run format:python && npm run format:docs",
     "test": "python3 -m unittest discover -s tests -v",
-    "check": "npm run lint && npm test"
+    "dogfood": "python3 dogfood/run.py",
+    "dogfood:keep": "python3 dogfood/run.py --keep",
+    "check": "npm run lint && npm test && npm run dogfood"
   },
   "devDependencies": {
     "prettier": "3.9.6"
