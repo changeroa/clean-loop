@@ -149,6 +149,8 @@ resolved script path:
 
 ```bash
 python3 "$clean_loop_script" transition "$run_dir" register-artifact --artifact findings/F001.json
+python3 "$clean_loop_script" transition "$run_dir" register-artifacts \
+  --artifacts findings/F001.json findings/F002.json findings/F003.json
 python3 "$clean_loop_script" transition "$run_dir" set-phase --phase synthesizing
 python3 "$clean_loop_script" transition "$run_dir" set-phase --phase planning --artifact syntheses/000.json
 python3 "$clean_loop_script" transition "$run_dir" activate-plan --artifact plans/000.json
@@ -158,15 +160,35 @@ python3 "$clean_loop_script" transition "$run_dir" start-attempt --task T001 \
 python3 "$clean_loop_script" transition "$run_dir" observe-execution \
   --execution T001-A01-E01 --observed-state active --at 2026-08-28T00:00:10Z
 python3 "$clean_loop_script" supervise "$run_dir" --at 2026-08-28T00:00:20Z
-python3 "$clean_loop_script" transition "$run_dir" submit --task T001 --artifact receipts/T001-A01.json
+python3 "$clean_loop_script" transition "$run_dir" submit --task T001 \
+  --artifact receipts/T001-A01.json --admit --compact
 python3 "$clean_loop_script" transition "$run_dir" apply-verdict --task T001 \
-  --artifact verdicts/T001-A01.json
+  --artifact verdicts/T001-A01.json --admit --compact
 python3 "$clean_loop_script" transition "$run_dir" set-phase --phase verifying
 python3 "$clean_loop_script" transition "$run_dir" set-phase --phase completed \
   --artifact verdicts/run-plan-000.json
 ```
 
-Register every synthesis, plan, receipt, and verdict before an event consumes it, using its
-run-relative path.
+`register-artifacts` validates the complete proposed batch and updates `run.json` once; order inside
+the batch does not matter, and any failure leaves the projection unchanged. Every path must name a
+new file in a governed immutable group. `questions.json` and `run.json` are never registration
+targets.
+
+Without `--admit`, register every receipt and verdict before an event consumes it. With `--admit`,
+`submit` or `apply-verdict` validates, registers, and consumes its artifact in one projection
+update. Use `--at <UTC timestamp ending in Z>` for every host observation and attempt start; a
+rejected task verdict requires `--at` when attempts remain because applying it starts the next
+attempt.
+
+`validate` returns a bounded summary. Use `validate --full` for the complete projection, `status`
+for the summary plus legal next actions, and `next` for only those actions. After new requirements
+arrive for a completed run, use:
+
+```bash
+python3 "$clean_loop_script" init-next "$next_run_dir" \
+  --after "$run_dir" --goal "<new bounded goal>"
+```
+
+The successor records the completed predecessor run ID, run-verdict path, and `run.json` SHA-256.
 
 `validate` checks both schema-level contracts and cross-artifact consistency.

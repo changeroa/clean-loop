@@ -40,8 +40,9 @@ For each cycle:
 2. For `dispatch`, route the task, run `start-attempt`, then spawn with the returned execution ID.
 3. For `poll`, query the adapter and record `observe-execution`. Include the stable external host ID
    and bounded progress metadata when available.
-4. For `collect_receipt`, retrieve and validate the result. Do not invent worker success when the
-   receipt is missing.
+4. For `collect_receipt`, retrieve and validate the result. Prefer
+   `submit --artifact <receipt> --admit` to register and submit it atomically. Do not invent worker
+   success when the receipt is missing.
 5. For `reconcile_workspace`, inspect the declared write scope and actual diff before deciding what
    happened. Persist an `outcome: error` receipt that identifies the stopped execution and observed
    partial state. Meta then dispatches a fresh verifier and applies its task verdict; retry is not
@@ -71,6 +72,9 @@ After a supervisor restart, run `validate`, then call `supervise` with the curre
 kernel reconstructs the next action from `run.json`; no in-memory agent conversation is a source of
 truth. If the adapter cannot reconnect to the recorded `external_id`, report `unknown` and let the
 lease/grace path reconcile it.
+
+Use `status` for a bounded projection summary with legal next-action guidance. Use `next` when the
+host needs only those actions. These commands do not read the clock or mutate the run.
 
 ## MVP boundary
 

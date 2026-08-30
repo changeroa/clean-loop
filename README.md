@@ -119,6 +119,8 @@ python3 "$clean_loop_script" init "$run_dir" \
   --goal "Implement one bounded change"
 
 python3 "$clean_loop_script" validate "$run_dir"
+python3 "$clean_loop_script" status "$run_dir"
+python3 "$clean_loop_script" next "$run_dir"
 python3 "$clean_loop_script" supervise "$run_dir" \
   --at 2026-08-28T00:00:00Z
 ```
@@ -171,6 +173,16 @@ Meta agent and uses the kernel as its source of truth.
 Findings, syntheses, plans, receipts, and verdicts are immutable once registered. `run.json` is the
 only mutable projection and assumes exactly one supervisor writer.
 
+Write one artifact and register it immediately, or admit a complete batch atomically with
+`register-artifacts`. A worker receipt and its task submission can be committed in one projection
+update with `submit --artifact <receipt> --admit`; task verdicts support the same pattern through
+`apply-verdict --admit`. `questions.json` remains mutable and must never be registered.
+
+`validate` prints a bounded health summary by default; use `validate --full` for the complete
+projection. `status` adds legal next-action guidance, while `next` returns only those actions. When
+a completed run receives a new requirement, preserve it and create a linked successor with
+`init-next <new-run-dir> --after <completed-run-dir> --goal <goal>`.
+
 ## Development
 
 ```bash
@@ -186,6 +198,7 @@ The check suite runs Ruff linting and formatting, Prettier, and the unit/CLI sui
 - transient host unavailability and lease recovery
 - receipt timeout and workspace reconciliation
 - stale-result fencing and supervisor restart recovery
+- atomic artifact admission, event-specific argument errors, and successor-run linkage
 
 The tests prove the kernel contract, not a particular host integration. Each adapter still needs
 conformance coverage for spawn, status mapping, result collection, interruption, and reconnect.

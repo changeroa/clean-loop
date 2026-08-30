@@ -418,9 +418,9 @@ def validate_execution(execution_id, data):
         raise ProtocolError(f"{execution_id} terminal state requires a reason")
 
 
-def validate_run(root, allow_unregistered=None):
+def validate_run(root, allow_unregistered=None, projection=None):
     root = Path(root)
-    run = load(root / "run.json")
+    run = projection if projection is not None else load(root / "run.json")
     fields = [
         "schema_version",
         "run_id",
@@ -482,6 +482,18 @@ def validate_run(root, allow_unregistered=None):
         not isinstance(run["run_verdict"], str) or not run["run_verdict"]
     ):
         raise ProtocolError("run.json has invalid run verdict reference")
+    predecessor = run.get("predecessor")
+    if predecessor is not None:
+        require(predecessor, ["run_id", "run_verdict", "run_sha256"], "run.json.predecessor")
+        if (
+            not isinstance(predecessor["run_id"], str)
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", predecessor["run_id"])
+            or not isinstance(predecessor["run_verdict"], str)
+            or not predecessor["run_verdict"]
+            or not isinstance(predecessor["run_sha256"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", predecessor["run_sha256"]) is None
+        ):
+            raise ProtocolError("run.json has invalid predecessor evidence")
     questions = load(root / "questions.json")
     if not isinstance(questions, list):
         raise ProtocolError("questions.json must be a list")
@@ -503,10 +515,23 @@ def validate_run(root, allow_unregistered=None):
         for path in (root / group).glob("*.json")
     }
     registered = set(run["artifacts"])
-    if disk - registered != set(allow_unregistered or ()) or registered - disk:
-        raise ProtocolError(
-            "every immutable artifact must be registered, with no stale registrations"
-        )
+    allowed = set(allow_unregistered or ())
+    unregistered = disk - registered
+    stale = registered - disk
+    unexpected = unregistered - allowed
+    missing_candidates = allowed - unregistered
+    if unexpected or stale or missing_candidates:
+        problems = []
+        if unexpected:
+            problems.append("unregistered artifacts: " + ", ".join(sorted(unexpected)))
+        if stale:
+            problems.append("registered artifacts missing from disk: " + ", ".join(sorted(stale)))
+        if missing_candidates:
+            problems.append(
+                "registration candidates not found as unregistered artifacts: "
+                + ", ".join(sorted(missing_candidates))
+            )
+        raise ProtocolError("; ".join(problems))
     items = {rel: artifact(root, run, rel) for rel in sorted(registered)}
     findings = {data["id"]: data for rel, data in items.items() if rel.startswith("findings/")}
     if len(findings) != sum(rel.startswith("findings/") for rel in items) or any(
@@ -682,6 +707,226 @@ def init_run(root, goal, run_id=None):
     write(root / "run.json", run)
     write(root / "questions.json", [])
     return run
+
+
+def init_next_run(root, predecessor_root, goal, run_id=None):
+    predecessor_root = Path(predecessor_root)
+    predecessor = validate_run(predecessor_root)
+    if predecessor["phase"] != "completed":
+        raise ProtocolError(
+            f"predecessor run must be completed; {predecessor['run_id']} is {predecessor['phase']}"
+        )
+    run = init_run(root, goal, run_id)
+    run["predecessor"] = {
+        "run_id": predecessor["run_id"],
+        "run_verdict": predecessor["run_verdict"],
+        "run_sha256": digest(predecessor_root / "run.json"),
+    }
+    write(Path(root) / "run.json", run)
+    return run
+
+
+def run_summary(root, run, include_next=True):
+    active_specs = []
+    if run["active_plan"] is not None:
+        active_specs = active_plan(root, run)["tasks"]
+    active_ids = {spec["id"] for spec in active_specs}
+    state_counts = {
+        state: sum(
+            task_id in active_ids and task["state"] == state
+            for task_id, task in run["tasks"].items()
+        )
+        for state in sorted(STATES)
+    }
+    summary = {
+        "run_id": run["run_id"],
+        "valid": True,
+        "phase": run["phase"],
+        "active_synthesis": run["active_synthesis"],
+        "active_plan": run["active_plan"],
+        "active_tasks": len(active_specs),
+        "task_states": state_counts,
+        "executions": len(run["executions"]),
+        "registered_artifacts": len(run["artifacts"]),
+        "blocked_reasons": run["blocked_reasons"],
+        "run_verdict": run["run_verdict"],
+    }
+    if include_next:
+        summary["next_actions"] = next_actions(root, run)
+    return summary
+
+
+def next_actions(root, run):
+    phase = run["phase"]
+    if phase == "exploring":
+        return [
+            {
+                "action": "explore",
+                "detail": "Answer questions.json with registered findings, then enter synthesizing.",
+                "command": "transition <run-dir> set-phase --phase synthesizing --compact",
+            }
+        ]
+    if phase == "synthesizing":
+        syntheses = sorted(
+            (artifact(root, run, rel)["revision"], rel)
+            for rel in run["artifacts"]
+            if rel.startswith("syntheses/")
+        )
+        candidates = [
+            (revision, rel)
+            for revision, rel in syntheses
+            if run["active_synthesis"] is None or revision > run["active_synthesis"]
+        ]
+        if not candidates:
+            return [
+                {
+                    "action": "create_synthesis",
+                    "detail": "Create and register the next synthesis revision.",
+                }
+            ]
+        _, latest = candidates[0]
+        disposition = artifact(root, run, latest)["disposition"]
+        target = {
+            "ready": "planning",
+            "needs_more_evidence": "exploring",
+            "needs_authority": "blocked",
+        }[disposition]
+        return [
+            {
+                "action": "set_phase",
+                "detail": f"The latest synthesis permits phase={target}.",
+                "command": (
+                    f"transition <run-dir> set-phase --phase {target} --artifact {latest} --compact"
+                ),
+            }
+        ]
+    if phase == "planning":
+        candidates = []
+        for rel in sorted(run["artifacts"]):
+            if not rel.startswith("plans/"):
+                continue
+            plan = artifact(root, run, rel)
+            if plan["based_on_synthesis"] == run["active_synthesis"] and (
+                run["active_plan"] is None or plan["revision"] > run["active_plan"]
+            ):
+                candidates.append(rel)
+        if candidates:
+            return [
+                {
+                    "action": "activate_plan",
+                    "detail": "Activate the registered plan based on the active synthesis.",
+                    "command": (
+                        f"transition <run-dir> activate-plan --artifact {candidates[0]} --compact"
+                    ),
+                }
+            ]
+        return [
+            {
+                "action": "create_plan",
+                "detail": "Create and register a newer plan based on the active synthesis.",
+            }
+        ]
+    if phase == "executing":
+        active = next(
+            (
+                (task_id, task, run["executions"][task["current_execution"]])
+                for task_id, task in run["tasks"].items()
+                if task["state"] == "running"
+            ),
+            None,
+        )
+        if active:
+            task_id, task, execution = active
+            action = (
+                "collect_receipt"
+                if execution["state"] == "awaiting_receipt"
+                else "reconcile_workspace"
+                if execution["state"] in {"terminated", "lost"}
+                else "observe_execution"
+            )
+            return [
+                {
+                    "action": action,
+                    "task_id": task_id,
+                    "attempt_id": task["current_attempt"],
+                    "execution_id": execution["id"],
+                    "execution_state": execution["state"],
+                    "detail": "Use an explicit UTC --at timestamp for host observations.",
+                }
+            ]
+        submitted = next(
+            (
+                (task_id, task)
+                for task_id, task in run["tasks"].items()
+                if task["state"] == "submitted"
+            ),
+            None,
+        )
+        if submitted:
+            return [
+                {
+                    "action": "verify_task",
+                    "task_id": submitted[0],
+                    "attempt_id": submitted[1]["current_attempt"],
+                    "detail": "Register and apply an independent task verdict.",
+                }
+            ]
+        spec = runnable(root, run)
+        if spec:
+            return [
+                {
+                    "action": "start_attempt",
+                    "task_id": spec["id"],
+                    "detail": "Start the next runnable task with explicit host/model/effort/time.",
+                }
+            ]
+        return [
+            {
+                "action": "set_phase",
+                "detail": "All active tasks are terminal; enter run verification.",
+                "command": "transition <run-dir> set-phase --phase verifying --compact",
+            }
+        ]
+    if phase == "verifying":
+        target = f"plan-{run['active_plan']:03d}"
+        verdicts = []
+        for rel in sorted(run["artifacts"]):
+            if not rel.startswith("verdicts/"):
+                continue
+            verdict = artifact(root, run, rel)
+            if verdict["scope"] == "run" and verdict["target"] == target:
+                verdicts.append((rel, verdict))
+        if verdicts:
+            rel, verdict = verdicts[-1]
+            target_phase = {"pass": "completed", "replan": "planning", "block": "blocked"}[
+                verdict["outcome"]
+            ]
+            return [
+                {
+                    "action": "set_phase",
+                    "detail": f"The registered run verdict permits phase={target_phase}.",
+                    "command": (
+                        f"transition <run-dir> set-phase --phase {target_phase} "
+                        f"--artifact {rel} --compact"
+                    ),
+                }
+            ]
+        return [
+            {
+                "action": "verify_run",
+                "plan_revision": run["active_plan"],
+                "detail": "Register a run verdict, then use it to complete, replan, or block.",
+            }
+        ]
+    if phase == "completed":
+        return [
+            {
+                "action": "start_next_run",
+                "detail": "New requirements belong in a successor run; do not reopen this run.",
+                "command": "init-next <new-run-dir> --after <this-run-dir> --goal <goal>",
+            }
+        ]
+    return [{"action": "wait", "phase": phase, "detail": "Human or protocol recovery is required."}]
 
 
 def runnable(root, run):
@@ -900,9 +1145,108 @@ def supervision_directive(root, run, at):
     return directive
 
 
+def validate_registration_path(root, relative):
+    if relative == "questions.json":
+        raise ProtocolError("questions.json is mutable and must not be registered")
+    if relative == "run.json":
+        raise ProtocolError("run.json is the mutable projection and must not be registered")
+    path = safe_path(Path(root), relative)
+    group = PurePosixPath(relative).parts[0]
+    if group not in VALIDATORS:
+        raise ProtocolError(
+            f"unsupported artifact group for {relative}; expected one of: "
+            + ", ".join(sorted(VALIDATORS))
+        )
+    return path
+
+
+def require_event_arguments(args):
+    required = {
+        "register-artifact": ["artifact"],
+        "register-artifacts": ["artifacts"],
+        "set-phase": ["phase"],
+        "activate-plan": ["artifact"],
+        "start-attempt": ["task", "adapter", "model", "reasoning_effort", "at"],
+        "observe-execution": ["execution", "observed_state", "at"],
+        "submit": ["task", "artifact"],
+        "apply-verdict": ["task", "artifact"],
+        "skip-task": ["task", "reason"],
+        "invalidate-task": ["task", "reason"],
+    }
+    missing = []
+    for name in required[args.event]:
+        value = getattr(args, name, None)
+        if value is None or value == "" or value == []:
+            missing.append("--" + name.replace("_", "-"))
+    if missing:
+        raise ProtocolError(f"{args.event} requires: {', '.join(missing)}")
+    if getattr(args, "admit", False) and args.event not in {"submit", "apply-verdict"}:
+        raise ProtocolError("--admit is supported only for submit and apply-verdict")
+
+
+def register_artifacts(root, relatives):
+    root = Path(root)
+    if len(set(relatives)) != len(relatives):
+        raise ProtocolError("register-artifacts received duplicate paths")
+    for relative in relatives:
+        validate_registration_path(root, relative)
+    run = validate_run(root, set(relatives))
+    proposed = json.loads(json.dumps(run))
+    for relative in relatives:
+        data = artifact(root, run, relative, False)
+        if relative.startswith("receipts/"):
+            check_receipt_target(run, data)
+        proposed["artifacts"][relative] = digest(safe_path(root, relative))
+    plans = [relative for relative in proposed["artifacts"] if relative.startswith("plans/")]
+    if len(plans) > proposed["limits"]["max_plan_revisions"]:
+        raise ProtocolError(
+            f"register-artifacts would exceed the plan revision limit "
+            f"({proposed['limits']['max_plan_revisions']})"
+        )
+    validate_run(root, projection=proposed)
+    write(root / "run.json", proposed)
+    return {
+        "registered": sorted(relatives),
+        "registered_artifacts": len(proposed["artifacts"]),
+        "phase": proposed["phase"],
+    }
+
+
+def transition_summary(root, event, result, run):
+    summary = {
+        "event": event,
+        "phase": run["phase"],
+        "active_plan": run["active_plan"],
+        "registered_artifacts": len(run["artifacts"]),
+    }
+    if event == "start-attempt":
+        summary.update(
+            task_id=PATTERNS["attempt"].fullmatch(result["attempt_id"]).group(1),
+            attempt_id=result["attempt_id"],
+            execution_id=result["id"],
+            action="poll",
+        )
+    elif event == "register-artifacts":
+        summary["registered"] = result["registered"]
+    elif event == "apply-verdict":
+        summary.update(outcome=result["outcome"])
+    elif event in {"skip-task", "invalidate-task"}:
+        summary.update(task_state=result["state"])
+    summary["next_actions"] = next_actions(Path(root), run)
+    return summary
+
+
 def transition(root, args):
     root = Path(root)
     event = args.event
+    require_event_arguments(args)
+    if event == "register-artifact":
+        validate_registration_path(root, args.artifact)
+    elif event == "register-artifacts":
+        return register_artifacts(root, args.artifacts)
+    admit = getattr(args, "admit", False)
+    if admit:
+        validate_registration_path(root, args.artifact)
     if event == "set-phase" and args.phase == "failed":
         run = load(root / "run.json")
         require(run, ["phase", "blocked_reasons"], "run.json")
@@ -915,7 +1259,19 @@ def transition(root, args):
         run["blocked_reasons"].append(args.reason)
         write(root / "run.json", run)
         return run
-    run = validate_run(root, {args.artifact} if event == "register-artifact" else None)
+    allow_unregistered = {args.artifact} if event == "register-artifact" or admit else None
+    run = validate_run(root, allow_unregistered)
+    if event == "set-phase":
+        needs_artifact = (
+            run["phase"] == "synthesizing" and args.phase in {"planning", "exploring", "blocked"}
+        ) or (run["phase"] == "verifying" and args.phase in {"completed", "planning", "blocked"})
+        if needs_artifact and not args.artifact:
+            raise ProtocolError(f"set-phase {run['phase']} -> {args.phase} requires: --artifact")
+    if admit:
+        candidate = artifact(root, run, args.artifact, False)
+        if event == "submit":
+            check_receipt_target(run, candidate)
+        run["artifacts"][args.artifact] = digest(safe_path(root, args.artifact))
     if event == "register-artifact":
         result = artifact(root, run, args.artifact, False)
         if args.artifact.startswith("receipts/"):
@@ -998,7 +1354,11 @@ def transition(root, args):
         result = run
     elif event == "activate-plan":
         if run["phase"] != "planning":
-            raise ProtocolError("plans activate only from planning")
+            hint = "transition <run-dir> set-phase --phase planning --artifact <synthesis>"
+            raise ProtocolError(
+                f"cannot activate a plan while phase={run['phase']}; "
+                f"enter planning first with: {hint}"
+            )
         result = artifact(root, run, args.artifact)
         if result["based_on_synthesis"] != run["active_synthesis"]:
             raise ProtocolError("plan is not based on active synthesis")
@@ -1118,6 +1478,11 @@ def transition(root, args):
                 raise ProtocolError("required receipt checks must succeed")
             state.update(state="accepted", current_attempt=None, current_execution=None)
         elif outcome == "reject" and len(state["attempts"]) < run["limits"]["max_task_attempts"]:
+            if not args.at:
+                raise ProtocolError(
+                    "applying a reject verdict requires --at <UTC timestamp ending in Z> "
+                    "to start the retry attempt"
+                )
             previous = run["executions"][state["current_execution"]]
             spec = next(item for item in active_plan(root, run)["tasks"] if item["id"] == args.task)
             start_attempt(
@@ -1169,7 +1534,15 @@ def make_parser():
     init.add_argument("run_dir", type=Path)
     init.add_argument("--goal", required=True)
     init.add_argument("--run-id")
-    for name in ["validate", "runnable"]:
+    init_next = commands.add_parser("init-next")
+    init_next.add_argument("run_dir", type=Path)
+    init_next.add_argument("--after", required=True, type=Path)
+    init_next.add_argument("--goal", required=True)
+    init_next.add_argument("--run-id")
+    validate = commands.add_parser("validate")
+    validate.add_argument("run_dir", type=Path)
+    validate.add_argument("--full", action="store_true")
+    for name in ["runnable", "status", "next"]:
         command = commands.add_parser(name)
         command.add_argument("run_dir", type=Path)
     supervise = commands.add_parser("supervise")
@@ -1181,6 +1554,7 @@ def make_parser():
         "event",
         choices=[
             "register-artifact",
+            "register-artifacts",
             "set-phase",
             "activate-plan",
             "start-attempt",
@@ -1192,6 +1566,7 @@ def make_parser():
         ],
     )
     change.add_argument("--artifact")
+    change.add_argument("--artifacts", nargs="+")
     change.add_argument("--phase", choices=sorted(PHASES))
     change.add_argument("--task")
     change.add_argument("--reason")
@@ -1203,6 +1578,8 @@ def make_parser():
     change.add_argument("--observed-state", choices=sorted(OBSERVED_STATES))
     change.add_argument("--external-id")
     change.add_argument("--progress")
+    change.add_argument("--admit", action="store_true")
+    change.add_argument("--compact", action="store_true")
     return top
 
 
@@ -1211,15 +1588,25 @@ def main(argv=None):
     try:
         if args.command == "init":
             result = init_run(args.run_dir, args.goal, args.run_id)
+        elif args.command == "init-next":
+            result = init_next_run(args.run_dir, args.after, args.goal, args.run_id)
         elif args.command == "validate":
-            result = validate_run(args.run_dir)
+            run = validate_run(args.run_dir)
+            result = run if args.full else run_summary(args.run_dir, run, include_next=False)
         elif args.command == "runnable":
             result = runnable(args.run_dir, validate_run(args.run_dir))
+        elif args.command == "status":
+            result = run_summary(args.run_dir, validate_run(args.run_dir))
+        elif args.command == "next":
+            result = next_actions(args.run_dir, validate_run(args.run_dir))
         elif args.command == "supervise":
             result = supervision_directive(args.run_dir, validate_run(args.run_dir), args.at)
             validate_run(args.run_dir)
         else:
             result = transition(args.run_dir, args)
+            if args.compact:
+                run = validate_run(args.run_dir)
+                result = transition_summary(args.run_dir, args.event, result, run)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     except ProtocolError as exc:
